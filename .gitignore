@@ -154,3 +154,10 @@ $RECYCLE.BIN/
 
 # Mac desktop service store files
 .DS_Store
+
+# Enable release binary for ready to use downloads
+!PGPbiometric/bin
+PGPbiometric/bin/*
+!PGPbiometric/bin/Release
+PGPbiometric/bin/Release/*
+!PGPbiometric/bin/Release/PGPbiometric.exe
