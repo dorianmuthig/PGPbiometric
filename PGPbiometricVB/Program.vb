@@ -270,29 +270,69 @@ Namespace PGPbiometric
             Dim fileIn As Stream = New MemoryStream()
             Dim inputStream As Stream = New MemoryStream()
 
-            If args.Length = 1 Then
+            Dim encodeDecodeToggle As Boolean = True
+            Dim stdInPipePresent As Boolean = False
+            Dim validFilePath As Boolean = False
+            Dim fileReadError As Boolean = False
+            Dim filePath As String = String.Empty
+
+            If args.Length > 0 AndAlso args(0).Equals("decode", StringComparison.OrdinalIgnoreCase) Then
+                encodeDecodeToggle = False
+            End If
+            If args.Length > 1 Then
+                filePath = args(1)
+            ElseIf args.Length = 1 AndAlso encodeDecodeToggle = True AndAlso Not args(0).Equals("encode", StringComparison.OrdinalIgnoreCase) Then
+                filePath = args(0)
+            End If
+
+            If filePath <> String.Empty Then
+                Dim fileFound As Boolean = True
                 Try
-                    fileIn = File.Open(args(0), FileMode.Open)
+                    fileIn = File.Open(filePath, FileMode.Open)
                 Catch e As FileNotFoundException
                     If e IsNot Nothing Then
-                        Console.[Error].WriteLine("The specified file was not found.")
-                        Console.[Error].WriteLine("Please either use stdIn or specify the path to a binary file to encode.")
-                        Return
+                        fileFound = False
                     End If
-                End Try
-                inputStream = fileIn
-            ElseIf args.Length = 0 Then
-                Try
-                    Dim tmp As Boolean = Console.KeyAvailable
-                    Console.[Error].WriteLine("Invalid command line arguments or no input detected.")
-                    Console.[Error].WriteLine("Please either use stdIn or specify the path to a binary file to encode.")
-                    Return
-                Catch e As InvalidOperationException
-                    'Do nothing.
+                Catch e As IOException
                     If e IsNot Nothing Then
+                        fileReadError = True
                     End If
                 End Try
+                If fileFound = True Then
+                    validFilePath = True
+                End If
+            End If
+
+            Try
+                Dim tmp As Boolean = Console.KeyAvailable
+            Catch e As InvalidOperationException
+                If e IsNot Nothing Then
+                    stdInPipePresent = True
+                End If
+            End Try
+
+            If stdInPipePresent = True Then
                 inputStream = stdIn
+            ElseIf validFilePath = True AndAlso fileReadError = False Then
+                inputStream = fileIn
+            Else
+                If stdInPipePresent = False AndAlso filePath <> String.Empty Then
+                    If fileReadError = False Then
+                        Console.[Error].WriteLine("The specified file was not found.")
+                    Else
+                        Console.[Error].WriteLine("The specified file could not be read.")
+                    End If
+                Else
+                    Console.[Error].WriteLine("Invalid command line arguments or no input detected.")
+                End If
+                Dim errorMessage As String = "Please either use stdIn or specify the path to a binary file to "
+                If encodeDecodeToggle = True Then
+                    errorMessage = String.Concat(errorMessage, "encode.")
+                Else
+                    errorMessage = String.Concat(errorMessage, "decode.")
+                End If
+                Console.[Error].WriteLine(errorMessage)
+                Return
             End If
 
             Dim buffer As Byte() = New Byte(0) {}
@@ -301,24 +341,47 @@ Namespace PGPbiometric
             Dim bytes As Integer
             Dim oddByte As Boolean = False
             Dim firstByte As Boolean = True
+            Dim decodedWord As String = String.Empty
+
             While (InlineAssignHelper(bytes, inputStream.Read(buffer, 0, buffer.Length))) > 0
-                Dim biometricByte As String = String.Empty
-                If firstByte <> True Then
-                    biometricByte = String.Concat(biometricByte, " ")
+                If encodeDecodeToggle = True Then
+                    Dim biometricByte As String = String.Empty
+                    If firstByte <> True Then
+                        biometricByte = String.Concat(biometricByte, " ")
+                    Else
+                        firstByte = False
+                    End If
+                    Dim biometricTuple As Tuple(Of String, String) = WordDictionary.Where(Function(x) x.Key = buffer(0)).First().Value
+                    Dim biometricWord As String = String.Empty
+                    If oddByte = False Then
+                        biometricWord = biometricTuple.Item1
+                    Else
+                        biometricWord = biometricTuple.Item2
+                    End If
+                    oddByte = Not oddByte
+                    biometricByte = String.Concat(biometricByte, biometricWord)
+                    Dim biometricByteArray As Byte() = Encoding.UTF8.GetBytes(biometricByte)
+                    stdOut.Write(biometricByteArray, 0, biometricByteArray.Length)
                 Else
-                    firstByte = False
+                    Dim validCharacters As Char() = "aAbBcCdDeEfFgGhHiIjJkKlLmMnNoOpPqQrRsStTuUvVwWxXyYzZ".ToArray()
+                    Dim character As Char = Convert.ToChar(buffer(0))
+                    If validCharacters.Contains(character) Then
+                        decodedWord = String.Concat(decodedWord, character.ToString())
+                    Else
+                        Dim currentWordDictionaryValue As KeyValuePair(Of Byte, Tuple(Of String, String)) = Nothing
+                        If oddByte = False Then
+                            currentWordDictionaryValue = WordDictionary.Where(Function(x) x.Value.Item1.Equals(decodedWord, StringComparison.OrdinalIgnoreCase)).FirstOrDefault()
+                        Else
+                            currentWordDictionaryValue = WordDictionary.Where(Function(x) x.Value.Item2.Equals(decodedWord, StringComparison.OrdinalIgnoreCase)).FirstOrDefault()
+                        End If
+                        If Not currentWordDictionaryValue.Equals(Nothing) Then
+                            Dim outBytes As Byte() = {currentWordDictionaryValue.Key}
+                            stdOut.Write(outBytes, 0, outBytes.Length)
+                            oddByte = Not oddByte
+                        End If
+                        decodedWord = String.Empty
+                    End If
                 End If
-                Dim biometricTuple As Tuple(Of String, String) = WordDictionary.Where(Function(x) x.Key = buffer(0)).First().Value
-                Dim biometricWord As String = String.Empty
-                If oddByte = False Then
-                    biometricWord = biometricTuple.Item1
-                Else
-                    biometricWord = biometricTuple.Item2
-                End If
-                oddByte = Not oddByte
-                biometricByte = String.Concat(biometricByte, biometricWord)
-                Dim biometricByteArray As Byte() = Encoding.UTF8.GetBytes(biometricByte)
-                stdOut.Write(biometricByteArray, 0, biometricByteArray.Length)
             End While
         End Sub
         Private Shared Function InlineAssignHelper(Of T)(ByRef target As T, value As T) As T

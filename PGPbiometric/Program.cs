@@ -275,40 +275,99 @@ namespace PGPbiometric
             Stream fileIn = new MemoryStream();
             Stream inputStream = new MemoryStream();
 
-            if (args.Length == 1)
+            bool encodeDecodeToggle = true;
+            bool stdInPipePresent = false;
+            bool validFilePath = false;
+            bool fileReadError = false;
+            string filePath = string.Empty;
+
+            if (args.Length > 0 && args[0].Equals("decode", StringComparison.OrdinalIgnoreCase))
             {
+                encodeDecodeToggle = false;
+            }
+            if (args.Length > 1)
+            {
+                filePath = args[1];
+            }
+            else if (args.Length == 1 && encodeDecodeToggle == true && !args[0].Equals("encode", StringComparison.OrdinalIgnoreCase))
+            {
+                filePath = args[0];
+            }
+
+            if (filePath != string.Empty)
+            {
+                bool fileFound = true;
                 try
                 {
-                    fileIn = File.Open(args[0], FileMode.Open);
+                    fileIn = File.Open(filePath, FileMode.Open);
                 }
                 catch (FileNotFoundException e)
                 {
                     if (e != null)
                     {
-                        Console.Error.WriteLine("The specified file was not found.");
-                        Console.Error.WriteLine("Please either use stdIn or specify the path to a binary file to encode.");
-                        return;
+                        fileFound = false;
                     }
                 }
-                inputStream = fileIn;
-            }
-            else if (args.Length == 0)
-            {
-                try
-                {
-                    bool tmp = Console.KeyAvailable;
-                    Console.Error.WriteLine("Invalid command line arguments or no input detected.");
-                    Console.Error.WriteLine("Please either use stdIn or specify the path to a binary file to encode.");
-                    return;
-                }
-                catch (InvalidOperationException e)
+                catch (IOException e)
                 {
                     if (e != null)
                     {
-                        //Do nothing.
+                        fileReadError = true;
                     }
                 }
+                if (fileFound == true)
+                {
+                    validFilePath = true;
+                }
+            }
+
+            try
+            {
+                bool tmp = Console.KeyAvailable;                    
+            }
+            catch (InvalidOperationException e)
+            {
+                if (e != null)
+                {
+                    stdInPipePresent = true;
+                }
+            }
+
+            if (stdInPipePresent == true)
+            {
                 inputStream = stdIn;
+            }
+            else if (validFilePath == true && fileReadError == false)
+            {
+                inputStream = fileIn;
+            }
+            else {
+                if (stdInPipePresent == false && filePath != string.Empty)
+                {
+                    if (fileReadError == false)
+                    {
+                        Console.Error.WriteLine("The specified file was not found.");
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine("The specified file could not be read.");
+                    }
+                }
+                else
+                {
+                    Console.Error.WriteLine("Invalid command line arguments or no input detected.");
+                }
+                string errorMessage = "Please either use stdIn or specify the path to a binary file to ";
+                if (encodeDecodeToggle == true)
+                {
+                    errorMessage = string.Concat(errorMessage, "encode.");
+                }
+                else
+                {
+                    errorMessage = string.Concat(errorMessage, "decode.");
+                }
+                Console.Error.WriteLine(errorMessage);
+                return;
             }
             
             byte[] buffer = new byte[1];
@@ -317,31 +376,64 @@ namespace PGPbiometric
             int bytes;
             bool oddByte = false;
             bool firstByte = true;
+            string decodedWord = string.Empty;
+
             while ((bytes = inputStream.Read(buffer, 0, buffer.Length)) > 0)
             {
-                string biometricByte = string.Empty;
-                if (firstByte != true)
+                if (encodeDecodeToggle == true)
                 {
-                    biometricByte = string.Concat(biometricByte, " ");                    
+                    string biometricByte = string.Empty;
+                    if (firstByte != true)
+                    {
+                        biometricByte = string.Concat(biometricByte, " ");
+                    }
+                    else
+                    {
+                        firstByte = false;
+                    }
+                    Tuple<string, string> biometricTuple = WordDictionary.Where(x => x.Key == buffer[0]).First().Value;
+                    string biometricWord = string.Empty;
+                    if (oddByte == false)
+                    {
+                        biometricWord = biometricTuple.Item1;
+                    }
+                    else
+                    {
+                        biometricWord = biometricTuple.Item2;
+                    }
+                    oddByte = !oddByte;
+                    biometricByte = string.Concat(biometricByte, biometricWord);
+                    byte[] biometricByteArray = Encoding.UTF8.GetBytes(biometricByte);
+                    stdOut.Write(biometricByteArray, 0, biometricByteArray.Length);
                 }
                 else
                 {
-                    firstByte = false;
+                    char[] validCharacters = "aAbBcCdDeEfFgGhHiIjJkKlLmMnNoOpPqQrRsStTuUvVwWxXyYzZ".ToArray();
+                    char character = Convert.ToChar(buffer[0]);
+                    if (validCharacters.Contains(character))
+                    {
+                        decodedWord = string.Concat(decodedWord, character.ToString());
+                    }
+                    else
+                    {
+                        KeyValuePair<byte, Tuple<string, string>> currentWordDictionaryValue = default(KeyValuePair<byte, Tuple<string, string>>);
+                        if (oddByte == false)
+                        {
+                            currentWordDictionaryValue = WordDictionary.Where(x => x.Value.Item1.Equals(decodedWord, StringComparison.OrdinalIgnoreCase)).FirstOrDefault();
+                        }
+                        else
+                        {
+                            currentWordDictionaryValue = WordDictionary.Where(x => x.Value.Item2.Equals(decodedWord, StringComparison.OrdinalIgnoreCase)).FirstOrDefault();
+                        }
+                        if (!currentWordDictionaryValue.Equals(default(KeyValuePair<byte, Tuple<string, string>>)))
+                        {
+                            byte[] outBytes = { currentWordDictionaryValue.Key };
+                            stdOut.Write(outBytes, 0, outBytes.Length);
+                            oddByte = !oddByte;
+                        }
+                        decodedWord = string.Empty;
+                    }
                 }
-                Tuple<string, string> biometricTuple = WordDictionary.Where(x => x.Key == buffer[0]).First().Value;
-                string biometricWord = string.Empty;
-                if (oddByte == false)
-                {
-                    biometricWord = biometricTuple.Item1;
-                }
-                else
-                {
-                    biometricWord = biometricTuple.Item2;
-                }
-                oddByte = !oddByte;
-                biometricByte = string.Concat(biometricByte, biometricWord);
-                byte[] biometricByteArray = Encoding.UTF8.GetBytes(biometricByte);
-                stdOut.Write(biometricByteArray, 0, biometricByteArray.Length);
             }
         }
     }
